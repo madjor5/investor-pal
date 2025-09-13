@@ -43,8 +43,10 @@ npm run prisma:migrate -- --name init
 - Submitting calls `POST /api/isin` which fetches basic asset data (stub provider) and persists to the Prisma models `Asset` and `AssetListing`.
 
 Notes:
-- The data provider is currently a stub in `src/lib/providers/isin.ts`. Replace with a real integration as needed and add any required API keys to `.env`.
-- Schema uses enums `AssetType` and `DistributionType`; provider output must map to these values.
+- Data provider now uses OpenAI in `src/lib/providers/isin.ts` to resolve ISINs using a tightly specified JSON-only prompt.
+- Add `OPENAI_API_KEY` to `.env` and restart dev server.
+- Yahoo suffix mapping and preferred listing order are enforced in post-processing to ensure one preferred listing and proper `yahooSymbol` generation.
+- Prisma schema supports `Asset.type` {STOCK|ETF|FUND}. If the model returns `UNKNOWN`, we default to `STOCK` for persistence while leaving `distribution` null when not ACC/DIST.
 
 # Option B: push schema directly (quick, no migration files)
 npm run db:push

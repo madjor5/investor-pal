@@ -65,10 +65,14 @@ export async function POST(req: NextRequest) {
       created: !existing,
       asset,
       listings,
+      preferredYahooSymbol: data.preferredYahooSymbol ?? null,
     });
   } catch (err: any) {
     console.error(err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    const msg = typeof err?.message === "string" ? err.message : "Server error";
+    const notFound = /not found/i.test(msg);
+    const clientErr = /missing|invalid|must be/i.test(msg);
+    const status = notFound ? 404 : clientErr ? 400 : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }
-

@@ -17,6 +17,7 @@ type Asset = {
 export function ResultCard({ data }: { data: any }) {
   const asset: Asset | undefined = data?.asset;
   const listings: Listing[] = data?.listings ?? [];
+  const preferredYahooSymbol: string | null | undefined = data?.preferredYahooSymbol;
   const created = data?.created ?? false;
 
   if (!asset) return null;
@@ -40,6 +41,11 @@ export function ResultCard({ data }: { data: any }) {
 
       <div className="mt-4">
         <h3 className="text-sm font-medium mb-2">Listings</h3>
+        {preferredYahooSymbol && (
+          <div className="mb-2 text-xs">
+            Preferred Yahoo symbol: <span className="font-mono">{preferredYahooSymbol}</span>
+          </div>
+        )}
         {listings.length === 0 ? (
           <div className="text-sm text-gray-500">No listings</div>
         ) : (
