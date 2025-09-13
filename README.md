@@ -36,6 +36,16 @@ npm run prisma:generate
 # Option A: tracked migrations (recommended for dev)
 npm run prisma:migrate -- --name init
 
+## Home screen for ISIN fetch
+
+- Start dev: `npm run dev`
+- Open the app and enter an ISIN on the home screen.
+- Submitting calls `POST /api/isin` which fetches basic asset data (stub provider) and persists to the Prisma models `Asset` and `AssetListing`.
+
+Notes:
+- The data provider is currently a stub in `src/lib/providers/isin.ts`. Replace with a real integration as needed and add any required API keys to `.env`.
+- Schema uses enums `AssetType` and `DistributionType`; provider output must map to these values.
+
 # Option B: push schema directly (quick, no migration files)
 npm run db:push
 ```
