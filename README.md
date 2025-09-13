@@ -1,5 +1,75 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Database & Prisma
+
+This app uses PostgreSQL with Prisma as ORM.
+
+- Models: `Asset`, `AssetListing`
+- Enums: `AssetType` (`STOCK`, `ETF`, `FUND`), `DistributionType` (`ACC`, `DIST`)
+- Constraints:
+  - `Asset.isin` is unique when set (nullable unique in Postgres allows multiple NULLs)
+  - An Asset has many listings
+  - `AssetListing` composite uniqueness: `(assetId, exchange, ticker)`
+  - Deleting an Asset cascades to its listings (`onDelete: Cascade` on the FK)
+
+Prisma schema lives in `prisma/schema.prisma`.
+
+### Setup
+
+1) Copy env and set your database URL
+
+```bash
+cp .env.example .env
+# then edit .env and set DATABASE_URL
+```
+
+2) Install Prisma and generate client
+
+```bash
+npm install prisma @prisma/client
+npm run prisma:generate
+```
+
+3) Create the database schema
+
+```bash
+# Option A: tracked migrations (recommended for dev)
+npm run prisma:migrate -- --name init
+
+# Option B: push schema directly (quick, no migration files)
+npm run db:push
+```
+
+4) Open Prisma Studio (optional)
+
+```bash
+npm run prisma:studio
+```
+
+### Using Prisma in code
+
+Import the shared client from `src/lib/prisma.ts`:
+
+```ts
+import { prisma } from '@/lib/prisma'
+
+// example: create an asset with a listing
+await prisma.asset.create({
+  data: {
+    type: 'ETF',
+    isin: 'IE00B4L5Y983',
+    distribution: 'ACC',
+    listings: {
+      create: {
+        exchange: 'XLON',
+        ticker: 'VUSA',
+        yahooSymbol: 'VUSA.L'
+      }
+    }
+  }
+})
+```
+
 ## Getting Started
 
 First, run the development server:
