@@ -2,6 +2,8 @@ import { HeaderBar } from "@/components/header/header-bar";
 import { Diversification } from "@/components/portfolio-widgets/diversification";
 import { PortfolioOverview } from "@/components/portfolio-widgets/porfolio-overview";
 import { RiskScore } from "@/components/portfolio-widgets/risk-score";
+import { StockSearch } from "@/components/portfolio-widgets/stock-search";
+import { TopHoldings } from "@/components/portfolio-widgets/top-holdings";
 import { TotalReturn } from "@/components/portfolio-widgets/total-return";
 
 
@@ -21,12 +23,13 @@ export default function Home() {
                 <RiskScore />
                 <Diversification />
               </div>
+              <TopHoldings />
             </div>
           </div>
 
           {/* Side Panel - Stock Search & Risk */}
           <div className="space-y-6">
-            Sidebar
+            <StockSearch />
           </div>
         </div>
       </main>
