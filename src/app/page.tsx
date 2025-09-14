@@ -1,5 +1,7 @@
 import { HeaderBar } from "@/components/header/header-bar";
+import { Diversification } from "@/components/portfolio-widgets/diversification";
 import { PortfolioOverview } from "@/components/portfolio-widgets/porfolio-overview";
+import { RiskScore } from "@/components/portfolio-widgets/risk-score";
 import { TotalReturn } from "@/components/portfolio-widgets/total-return";
 
 
@@ -16,6 +18,8 @@ export default function Home() {
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <PortfolioOverview />
                 <TotalReturn />
+                <RiskScore />
+                <Diversification />
               </div>
             </div>
           </div>

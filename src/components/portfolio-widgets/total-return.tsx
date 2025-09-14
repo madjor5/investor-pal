@@ -1,4 +1,4 @@
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Percent, TrendingUp, TrendingDown } from "lucide-react"
 
 export const TotalReturn = () => {
