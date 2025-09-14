@@ -1,4 +1,5 @@
 import { HeaderBar } from "@/components/header/header-bar";
+import { PortfolioOverview } from "@/components/porfolio-overview";
 
 
 export default function Home() {
@@ -9,7 +10,7 @@ export default function Home() {
         <div className="grid gap-8 md:grid-cols-3">
           {/* Portfolio Overview - Takes 2 columns */}
           <div className="md:col-span-2">
-            <h1>Portfolio overivew</h1>
+            <PortfolioOverview />
           </div>
 
           {/* Side Panel - Stock Search & Risk */}
