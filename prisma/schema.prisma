@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountType {
+  Brokerage
+  Retirement
+  Savings
+}
+
+enum Currency {
+  USD
+  EUR
+  GBP
+  DKK
+  SEK
+  NOK
+}
+
+model Account {
+  id        String     @id @default(cuid())
+  name      String
+  type      AccountType
+  currency  Currency
+  purchases Purchase[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Instrument {
+  id           String      @id @default(cuid())
+  symbol       String
+  name         String
+  isin         String      @unique
+  currentPrice Float
+  purchases    Purchase[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model Purchase {
+  id           String     @id @default(cuid())
+  accountId    String
+  account      Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  instrumentId String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  quantity     Int
+  price        Float
+  fees         Float      @default(0)
+  tradeDate    DateTime
+  note         String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
