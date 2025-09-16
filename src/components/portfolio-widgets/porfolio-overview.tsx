@@ -1,11 +1,14 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { getPortfolioTotals } from "@/lib/portfolio"
 import { DollarSign, TrendingDown, TrendingUp } from "lucide-react"
 
-export const PortfolioOverview = () => {
-  // Mock portfolio data
-  const portfolioValue = 245750;
-  const dayChange = 2840;
-  const dayChangePercent = 1.17;
+export const PortfolioOverview = async () => {
+  const totals = await getPortfolioTotals()
+
+  const portfolioValue = totals.marketValue
+  const change = portfolioValue - totals.costBasis
+  const changePercent = totals.costBasis > 0 ? (change / totals.costBasis) * 100 : 0
+  const isGain = change >= 0
 
   return (
     <Card className="bg-gradient-to-br from-card to-card/80 shadow-card border-border/50 gap-0">
@@ -17,11 +20,20 @@ export const PortfolioOverview = () => {
       </CardHeader>
       <CardContent className="pt-0">
         <div className="text-2xl font-bold text-foreground">
-          ${portfolioValue.toLocaleString()}
+          ${portfolioValue.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}
         </div>
-        <div className={`flex items-center text-sm ${dayChange >= 0 ? 'text-gain' : 'text-loss'}`}>
-          {dayChange >= 0 ? <TrendingUp className="mr-1 h-3 w-3" /> : <TrendingDown className="mr-1 h-3 w-3" />}
-          ${Math.abs(dayChange).toLocaleString()} ({dayChangePercent >= 0 ? '+' : ''}{dayChangePercent}%)
+        <div className={`flex items-center text-sm ${isGain ? 'text-gain' : 'text-loss'}`}>
+          {isGain ? <TrendingUp className="mr-1 h-3 w-3" /> : <TrendingDown className="mr-1 h-3 w-3" />}
+          {`${isGain ? '+' : '-'}$${Math.abs(change).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })} (${changePercent >= 0 ? '+' : ''}${Math.abs(changePercent).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}%)`}
         </div>
       </CardContent>
     </Card>
