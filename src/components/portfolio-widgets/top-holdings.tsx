@@ -18,13 +18,16 @@ export const TopHoldings = async () => {
   const aggregated: HoldingRow[] = instruments
     .map((inst) => {
       const totalQty = inst.purchases.reduce((acc, p) => acc + p.quantity, 0);
-      if (totalQty <= 0) return null;
+      if (totalQty <= 0) return null; // no open position
 
-      const totalCost = inst.purchases.reduce(
-        (acc, p) => acc + p.quantity * p.price + p.fees,
+      // Compute average cost using only buy lots; sells should not change avg cost
+      const buyQty = inst.purchases.reduce((acc, p) => acc + (p.quantity > 0 ? p.quantity : 0), 0);
+      const totalBuyCost = inst.purchases.reduce(
+        (acc, p) => acc + (p.quantity > 0 ? p.quantity * p.price + p.fees : 0),
         0
       );
-      const avgCost = totalQty > 0 ? totalCost / totalQty : 0;
+      const avgCost = buyQty > 0 ? totalBuyCost / buyQty : 0;
+
       const currentValue = totalQty * inst.currentPrice;
       const changePct = avgCost > 0 ? ((inst.currentPrice - avgCost) / avgCost) * 100 : 0;
 

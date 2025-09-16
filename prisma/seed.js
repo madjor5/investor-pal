@@ -46,8 +46,11 @@ async function main() {
       data: { symbol: p.symbol, name: p.name, isin: p.isin, currentPrice },
     });
 
-    const lotCount = 1 + Math.floor(Math.random() * 3); // 1–3 purchases per instrument
-    for (let k = 0; k < lotCount; k++) {
+    const lotCount = 2 + Math.floor(Math.random() * 3); // 2–4 trades total per instrument
+    let boughtQty = 0;
+    // First create 1–3 buy lots
+    const buyLots = 1 + Math.floor(Math.random() * 3);
+    for (let k = 0; k < buyLots; k++) {
       const tradeSpread = currentPrice * 0.1;
       const price = Math.max(1, +(currentPrice + (Math.random() - 0.5) * 2 * tradeSpread).toFixed(2));
       const quantity = 5 + Math.floor(Math.random() * 60);
@@ -63,6 +66,33 @@ async function main() {
           tradeDate,
         },
       });
+      boughtQty += quantity;
+    }
+
+    // Optionally create 0–1 sell lots up to 60% of accumulated buys
+    const makeSell = Math.random() < 0.7 && boughtQty > 0; // 70% chance to have a sell
+    if (makeSell) {
+      const sellLots = Math.random() < 0.5 ? 1 : 2;
+      let remainingSellCapacity = Math.floor(boughtQty * 0.6);
+      for (let s = 0; s < sellLots && remainingSellCapacity > 0; s++) {
+        const tradeSpread = currentPrice * 0.08;
+        const price = Math.max(1, +(currentPrice + (Math.random() - 0.5) * 2 * tradeSpread).toFixed(2));
+        const maxThisLot = Math.max(1, Math.floor(remainingSellCapacity / (sellLots - s)));
+        const quantity = -1 * (1 + Math.floor(Math.random() * maxThisLot)); // negative for sell
+        const daysAgo = 3 + Math.floor(Math.random() * 150);
+        const tradeDate = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
+        await prisma.purchase.create({
+          data: {
+            accountId: (i % 2 === 0 ? a1 : a2).id,
+            instrumentId: instrument.id,
+            quantity,
+            price,
+            fees: +(Math.random() * 5).toFixed(2), // still pay fees on sells
+            tradeDate,
+          },
+        });
+        remainingSellCapacity += quantity; // quantity is negative, so subtracts
+      }
     }
   }
 }
