@@ -97,3 +97,61 @@ export const getDailySeries = async (
 
   return entries
 }
+
+export const getMonthlySeries = async (symbol: string): Promise<DailyPricePoint[]> => {
+  const apiKey = process.env.ALPHA_VANTAGE_API_KEY
+  if (!apiKey) {
+    throw new Error("Alpha Vantage API key is not configured")
+  }
+
+  const searchParams = new URLSearchParams({
+    function: "TIME_SERIES_MONTHLY",
+    symbol,
+    apikey: apiKey,
+  })
+
+  const response = await fetch(`${BASE_URL}?${searchParams.toString()}`, {
+    headers: { "User-Agent": "investor-pal/1.0" },
+    next: { revalidate: 60 * 60 * 24 },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Alpha Vantage request failed with status ${response.status}`)
+  }
+
+  const payload = await response.json()
+
+  if (payload?.Note) {
+    throw new Error("Alpha Vantage API rate limit exceeded")
+  }
+
+  if (payload?.["Error Message"]) {
+    throw new Error(`Alpha Vantage error: ${payload["Error Message"]}`)
+  }
+
+  const timeSeries: TimeSeriesResponse | undefined = payload?.["Monthly Time Series"]
+  if (!timeSeries) {
+    const detail =
+      payload?.Information ??
+      payload?.Note ??
+      payload?.["Error Message"] ??
+      "Alpha Vantage response missing monthly series"
+
+    console.warn(`Alpha Vantage response missing monthly series for ${symbol}: ${detail}`)
+    return []
+  }
+
+  const entries = Object.entries(timeSeries)
+    .map(([date, values]) => {
+      const close = parseClose(values)
+      if (close === null) {
+        return null
+      }
+
+      return { date, close }
+    })
+    .filter((entry): entry is DailyPricePoint => entry !== null)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+  return entries
+}

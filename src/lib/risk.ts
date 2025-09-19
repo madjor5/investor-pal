@@ -1,5 +1,10 @@
 import { cache } from "react"
-import { getDailySeries } from "./alpha-vantage"
+import {
+  ensureInstrumentPriceHistory,
+  getStoredPriceHistory,
+  DAYS_IN_HISTORY_TARGET,
+  MONTHS_IN_HISTORY_TARGET,
+} from "./market-data"
 import { getPortfolioHoldings, type PortfolioHolding } from "./portfolio"
 
 type RiskLevel = "Low" | "Moderate" | "High"
@@ -17,10 +22,12 @@ export type PortfolioRiskMetrics = {
   warnings: string[]
 }
 
+const MS_PER_DAY = 86_400_000
+
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max)
 
-const calculateDailyReturns = (series: { date: string; close: number }[]) => {
+const buildReturnMap = (series: { date: string; close: number }[]) => {
   const returns = new Map<string, number>()
 
   for (let i = 1; i < series.length; i++) {
@@ -30,8 +37,8 @@ const calculateDailyReturns = (series: { date: string; close: number }[]) => {
       continue
     }
 
-    const dailyReturn = current.close / prev.close - 1
-    returns.set(current.date, dailyReturn)
+    const change = current.close / prev.close - 1
+    returns.set(current.date, change)
   }
 
   return returns
@@ -112,9 +119,9 @@ const deriveRiskScore = (
   valueAtRisk: number,
   sharpeRatio: number
 ) => {
-  const normalizedVolatility = clamp(annualVolatility / 0.25, 0, 1) // 25% annual vol saturates
-  const normalizedDrawdown = clamp(Math.abs(maxDrawdown) / 0.4, 0, 1) // 40% drawdown saturates
-  const normalizedVaR = clamp(Math.abs(valueAtRisk) * Math.sqrt(252) / 0.18, 0, 1) // annualise approx
+  const normalizedVolatility = clamp(annualVolatility / 0.25, 0, 1)
+  const normalizedDrawdown = clamp(Math.abs(maxDrawdown) / 0.4, 0, 1)
+  const normalizedVaR = clamp(Math.abs(valueAtRisk) * Math.sqrt(252) / 0.18, 0, 1)
 
   let risk = normalizedVolatility * 0.6 + normalizedDrawdown * 0.25 + normalizedVaR * 0.15
 
@@ -139,7 +146,11 @@ const determineRiskLevel = (score: number): RiskLevel => {
   return "High"
 }
 
-const buildWarnings = (holdings: PortfolioHolding[], usedHoldings: PortfolioHolding[]) => {
+const buildWarnings = (
+  holdings: PortfolioHolding[],
+  usedHoldings: PortfolioHolding[],
+  monthlyCoverage: number
+) => {
   if (holdings.length === 0) {
     return ["Your portfolio has no active positions"]
   }
@@ -150,17 +161,21 @@ const buildWarnings = (holdings: PortfolioHolding[], usedHoldings: PortfolioHold
     ]
   }
 
+  const warnings: string[] = []
+
   if (usedHoldings.length < holdings.length) {
     const missingSymbols = holdings
       .filter((holding) => !usedHoldings.includes(holding))
       .map((holding) => holding.symbol)
 
-    return [
-      `Missing market data for: ${missingSymbols.join(", ")}`,
-    ]
+    warnings.push(`Missing market data for: ${missingSymbols.join(", ")}`)
   }
 
-  return []
+  if (monthlyCoverage < 12) {
+    warnings.push("Monthly history is limited; long-term trend may be less reliable")
+  }
+
+  return warnings
 }
 
 export const getPortfolioRiskMetrics = cache(async (): Promise<PortfolioRiskMetrics> => {
@@ -182,24 +197,41 @@ export const getPortfolioRiskMetrics = cache(async (): Promise<PortfolioRiskMetr
     }
   }
 
-  const seriesResults = await Promise.all(
-    holdings.map(async (holding) => {
-      try {
-        const series = await getDailySeries(holding.symbol, { days: 400 })
-        return { holding, series }
-      } catch (error) {
-        console.error(`Failed to fetch Alpha Vantage data for ${holding.symbol}`, error)
-        return null
-      }
-    })
-  )
+  const now = new Date()
+  const dailyStartDate = new Date(now.getTime() - (DAYS_IN_HISTORY_TARGET + 30) * MS_PER_DAY)
+  const monthlyStartDate = new Date(Date.UTC(now.getUTCFullYear() - 5, now.getUTCMonth(), 1))
 
-  const usable = seriesResults.filter((result): result is { holding: PortfolioHolding; series: { date: string; close: number }[] } => {
+  const seriesResults: Array<{
+    holding: PortfolioHolding
+    dailySeries: { date: string; close: number }[]
+    monthlySeries: { date: string; close: number }[]
+  } | null> = []
+
+  for (const holding of holdings) {
+    try {
+      await ensureInstrumentPriceHistory(holding)
+      const [dailySeries, monthlySeries] = await Promise.all([
+        getStoredPriceHistory(holding.id, "DAILY", { startDate: dailyStartDate }),
+        getStoredPriceHistory(holding.id, "MONTHLY", { startDate: monthlyStartDate }),
+      ])
+
+      seriesResults.push({ holding, dailySeries, monthlySeries })
+    } catch (error) {
+      console.error(`Failed to prepare market data for ${holding.symbol}`, error)
+      seriesResults.push(null)
+    }
+  }
+
+  const usable = seriesResults.filter((result): result is {
+    holding: PortfolioHolding
+    dailySeries: { date: string; close: number }[]
+    monthlySeries: { date: string; close: number }[]
+  } => {
     if (!result) {
       return false
     }
 
-    return result.series.length >= 10
+    return result.dailySeries.length >= 10
   })
 
   if (usable.length === 0) {
@@ -213,7 +245,7 @@ export const getPortfolioRiskMetrics = cache(async (): Promise<PortfolioRiskMetr
       annualReturn: 0,
       observations: 0,
       latestDate: null,
-      warnings: buildWarnings(holdings, []),
+      warnings: buildWarnings(holdings, [], 0),
     }
   }
 
@@ -236,10 +268,10 @@ export const getPortfolioRiskMetrics = cache(async (): Promise<PortfolioRiskMetr
   }
 
   const weights = usedHoldings.map((holding) => holding.marketValue / usedMarketValue)
-  const returnMaps = usable.map((entry) => calculateDailyReturns(entry.series))
+  const dailyReturnMaps = usable.map((entry) => buildReturnMap(entry.dailySeries))
 
   const dateSet = new Set<string>()
-  for (const map of returnMaps) {
+  for (const map of dailyReturnMaps) {
     for (const date of map.keys()) {
       dateSet.add(date)
     }
@@ -251,15 +283,13 @@ export const getPortfolioRiskMetrics = cache(async (): Promise<PortfolioRiskMetr
 
   const portfolioReturns: number[] = []
   const availableDates: string[] = []
-  const portfolioValues: number[] = []
-  let cumulativeValue = 1
 
   for (const date of sortedDates) {
     let weightedReturn = 0
     let coveredWeight = 0
 
     for (let i = 0; i < weights.length; i++) {
-      const dailyReturn = returnMaps[i].get(date)
+      const dailyReturn = dailyReturnMaps[i].get(date)
       if (typeof dailyReturn === "number") {
         weightedReturn += dailyReturn * weights[i]
         coveredWeight += weights[i]
@@ -273,8 +303,6 @@ export const getPortfolioRiskMetrics = cache(async (): Promise<PortfolioRiskMetr
     const normalizedReturn = weightedReturn / coveredWeight
     portfolioReturns.push(normalizedReturn)
     availableDates.push(date)
-    cumulativeValue *= 1 + normalizedReturn
-    portfolioValues.push(cumulativeValue)
   }
 
   if (portfolioReturns.length < 5) {
@@ -296,39 +324,50 @@ export const getPortfolioRiskMetrics = cache(async (): Promise<PortfolioRiskMetr
   const dailyMean = calculateMean(portfolioReturns)
   const dailyStdDev = calculateStdDev(portfolioReturns, dailyMean)
   const annualVolatility = dailyStdDev * Math.sqrt(tradingDays)
-  const longHorizonReturns = (() => {
-    if (portfolioValues.length === 0) {
-      return [] as number[]
+
+  const monthlyReturnMaps = usable.map((entry) => buildReturnMap(entry.monthlySeries))
+  const monthSet = new Set<string>()
+  for (const map of monthlyReturnMaps) {
+    for (const date of map.keys()) {
+      if (new Date(date) >= monthlyStartDate) {
+        monthSet.add(date)
+      }
     }
+  }
 
-    const monthlyMap = new Map<string, { value: number }>()
-    for (let i = 0; i < availableDates.length; i++) {
-      const monthKey = availableDates[i].slice(0, 7)
-      monthlyMap.set(monthKey, { value: portfolioValues[i] })
-    }
+  const sortedMonths = Array.from(monthSet).sort(
+    (a, b) => new Date(a).getTime() - new Date(b).getTime()
+  )
 
-    const monthlyPoints = Array.from(monthlyMap.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+  const relevantMonths = sortedMonths.slice(-MONTHS_IN_HISTORY_TARGET)
+  const monthlyPortfolioReturns: number[] = []
 
-    const monthlyReturns: number[] = []
-    for (let i = 1; i < monthlyPoints.length; i++) {
-      const prev = monthlyPoints[i - 1][1].value
-      const current = monthlyPoints[i][1].value
-      if (prev > 0 && current > 0) {
-        monthlyReturns.push(current / prev - 1)
+  for (const month of relevantMonths) {
+    let weightedReturn = 0
+    let coveredWeight = 0
+
+    for (let i = 0; i < weights.length; i++) {
+      const monthlyReturn = monthlyReturnMaps[i].get(month)
+      if (typeof monthlyReturn === "number") {
+        weightedReturn += monthlyReturn * weights[i]
+        coveredWeight += weights[i]
       }
     }
 
-    return monthlyReturns
-  })()
+    if (coveredWeight === 0) {
+      continue
+    }
 
-  const trailingMonthlyReturns = longHorizonReturns.slice(-12)
+    monthlyPortfolioReturns.push(weightedReturn / coveredWeight)
+  }
+
+  const trailingMonthlyReturns = monthlyPortfolioReturns.slice(-12)
   const annualReturnLongTerm = calculateGeometricAnnualisedReturn(trailingMonthlyReturns, 12)
-
   const recentReturnsWindow = portfolioReturns.slice(-30)
   const annualReturnRecent = calculateGeometricAnnualisedReturn(recentReturnsWindow, tradingDays)
 
   const annualReturn =
-    trailingMonthlyReturns.length >= 3
+    trailingMonthlyReturns.length >= 6
       ? annualReturnLongTerm * 0.6 + annualReturnRecent * 0.4
       : calculateGeometricAnnualisedReturn(portfolioReturns, tradingDays)
 
@@ -338,6 +377,7 @@ export const getPortfolioRiskMetrics = cache(async (): Promise<PortfolioRiskMetr
 
   const riskScore = Number(deriveRiskScore(annualVolatility, maxDrawdown, valueAtRisk, sharpeRatio).toFixed(1))
   const riskLevel = determineRiskLevel(riskScore)
+  const warnings = buildWarnings(holdings, usedHoldings, trailingMonthlyReturns.length)
 
   return {
     riskScore,
@@ -349,6 +389,6 @@ export const getPortfolioRiskMetrics = cache(async (): Promise<PortfolioRiskMetr
     annualReturn: Number((annualReturn * 100).toFixed(2)),
     observations: portfolioReturns.length,
     latestDate: availableDates.at(-1) ?? null,
-    warnings: buildWarnings(holdings, usedHoldings),
+    warnings,
   }
 })
