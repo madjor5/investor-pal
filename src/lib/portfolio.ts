@@ -24,6 +24,13 @@ export type PortfolioTotals = {
   invested: number
 }
 
+export type PortfolioHolding = AggregatedInstrument & {
+  id: string
+  symbol: string
+  name: string
+  currentPrice: number
+}
+
 const sortByTradeDate = (a: Purchase, b: Purchase) =>
   a.tradeDate.getTime() - b.tradeDate.getTime()
 
@@ -109,4 +116,24 @@ export const getPortfolioTotals = cache(async () => {
   })
 
   return summarizePortfolio(instruments)
+})
+
+export const getPortfolioHoldings = cache(async (): Promise<PortfolioHolding[]> => {
+  const instruments = await prisma.instrument.findMany({
+    include: { purchases: true },
+  })
+
+  return instruments
+    .map((instrument) => {
+      const aggregated = aggregateInstrument(instrument)
+
+      return {
+        ...aggregated,
+        id: instrument.id,
+        symbol: instrument.symbol,
+        name: instrument.name,
+        currentPrice: instrument.currentPrice,
+      }
+    })
+    .filter((holding) => holding.quantity > 0 && holding.marketValue > 0)
 })
