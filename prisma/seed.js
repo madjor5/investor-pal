@@ -1,4 +1,5 @@
 // CommonJS seed script to avoid extra tooling
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { PrismaClient } = require("@prisma/client");
 
 const prisma = new PrismaClient();
@@ -46,7 +47,6 @@ async function main() {
       data: { symbol: p.symbol, name: p.name, isin: p.isin, currentPrice },
     });
 
-    const lotCount = 2 + Math.floor(Math.random() * 3); // 2–4 trades total per instrument
     let boughtQty = 0;
     // First create 1–3 buy lots
     const buyLots = 1 + Math.floor(Math.random() * 3);
