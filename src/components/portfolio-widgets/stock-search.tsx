@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -18,6 +19,13 @@ export const StockSearch = () => {
   const [error, setError] = useState<string | null>(null)
   const [isSearching, setIsSearching] = useState(false)
   const [isFetchingQuote, setIsFetchingQuote] = useState(false)
+  const [isBuyDialogOpen, setIsBuyDialogOpen] = useState(false)
+  const [isSubmittingBuy, setIsSubmittingBuy] = useState(false)
+  const [tradeQuantity, setTradeQuantity] = useState("")
+  const [tradePrice, setTradePrice] = useState("")
+  const [tradeDate, setTradeDate] = useState(() => new Date().toISOString().slice(0, 10))
+
+  const router = useRouter()
 
   const latestQueryRef = useRef<string>("")
   const suppressNextSearchRef = useRef(false)
@@ -120,6 +128,7 @@ export const StockSearch = () => {
       setSelectedMatch(match)
       setMatches([])
       setError(null)
+      setIsBuyDialogOpen(false)
       await fetchQuote(match.yahooSymbol)
     },
     [fetchQuote]
@@ -174,155 +183,338 @@ export const StockSearch = () => {
     return () => window.clearTimeout(timer)
   }, [fetchMatches, searchQuery])
 
+  const handleOpenBuyDialog = useCallback(() => {
+    const priceSource = (() => {
+      const marketPrice = typeof quote?.price === "number" ? quote.price : null
+      if (marketPrice !== null && Number.isFinite(marketPrice)) {
+        return marketPrice
+      }
+
+      const previousClose = typeof quote?.previousClose === "number" ? quote.previousClose : null
+      if (previousClose !== null && Number.isFinite(previousClose)) {
+        return previousClose
+      }
+
+      return null
+    })()
+
+    setTradeQuantity((current) => (current.trim().length > 0 ? current : "10"))
+    setTradePrice(priceSource !== null ? priceSource.toFixed(2) : "")
+    setTradeDate(new Date().toISOString().slice(0, 10))
+    setError(null)
+    setIsBuyDialogOpen(true)
+  }, [quote])
+
+  const handleCloseBuyDialog = useCallback(() => {
+    setIsBuyDialogOpen(false)
+  }, [])
+
+  const handleSubmitBuy = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      if (!selectedMatch) {
+        return
+      }
+
+      const quantityValue = Number.parseFloat(tradeQuantity)
+      const priceValue = Number.parseFloat(tradePrice)
+
+      if (!Number.isFinite(quantityValue) || quantityValue <= 0 || !Number.isInteger(quantityValue)) {
+        setError("Quantity must be a positive whole number")
+        return
+      }
+
+      if (!Number.isFinite(priceValue) || priceValue <= 0) {
+        setError("Price must be a positive number")
+        return
+      }
+
+      if (!tradeDate) {
+        setError("Trade date is required")
+        return
+      }
+
+      setIsSubmittingBuy(true)
+      setError(null)
+
+      try {
+        const response = await fetch("/api/purchases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            symbol: selectedMatch.symbol,
+            yahooSymbol: selectedMatch.yahooSymbol,
+            name: selectedMatch.name,
+            quantity: quantityValue,
+            price: priceValue,
+            tradeDate,
+            marketPrice: quote?.price ?? null,
+          }),
+        })
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}))
+          const message = typeof payload?.error === "string" ? payload.error : "Failed to record purchase"
+          throw new Error(message)
+        }
+
+        setIsBuyDialogOpen(false)
+        setTradeQuantity("")
+        setTradePrice("")
+        setTradeDate(new Date().toISOString().slice(0, 10))
+        router.refresh()
+      } catch (submitError) {
+        const message =
+          submitError instanceof Error ? submitError.message : "Unexpected error creating purchase"
+        setError(message)
+      } finally {
+        setIsSubmittingBuy(false)
+      }
+    },
+    [quote?.price, router, selectedMatch, tradeDate, tradePrice, tradeQuantity]
+  )
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg font-semibold text-foreground flex items-center gap-2">
-          <Search className="h-5 w-5 text-primary" />
-          Stock Search
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex gap-2">
-          <Input
-            placeholder="Enter ISIN or symbol..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            className="flex-1"
-          />
-          <Button onClick={handleSearch} size="sm" className="px-3" disabled={isSearching}>
-            {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-          </Button>
-        </div>
-
-        {error && <div className="text-sm text-destructive">{error}</div>}
-
-        {matches.length > 0 && (
-          <div className="rounded-md border border-border/60 bg-background/40 text-sm">
-            {matches.map((match) => (
-              <button
-                key={match.yahooSymbol}
-                onClick={() => void handleSelectMatch(match)}
-                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-muted"
-              >
-                <div>
-                  <div className="font-medium text-foreground">{match.yahooSymbol}</div>
-                  <div className="text-xs text-muted-foreground">{match.name}</div>
-                  {match.symbol.toUpperCase() !== match.yahooSymbol.toUpperCase() && (
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Base ticker: {match.symbol}
-                    </div>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground text-right">
-                  {(() => {
-                    const parts = [match.exchange, match.region].filter(
-                      (value): value is string => Boolean(value && value.trim().length > 0)
-                    )
-                    if (match.description) {
-                      parts.push(match.description)
-                    }
-                    if (typeof match.confidence === "number" && match.confidence > 0) {
-                      parts.push(`conf ${(match.confidence * 100).toFixed(0)}%`)
-                    }
-                    return parts.join(" · ")
-                  })() || ""}
-                </div>
-              </button>
-            ))}
-            {isSearching && (
-              <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" /> Searching…
-              </div>
-            )}
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <Search className="h-5 w-5 text-primary" />
+            Stock Search
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-2">
+            <Input
+              placeholder="Enter ISIN or symbol..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              className="flex-1"
+            />
+            <Button onClick={handleSearch} size="sm" className="px-3" disabled={isSearching}>
+              {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            </Button>
           </div>
-        )}
 
-        {selectedMatch && (
-          <div className="space-y-4 pt-4 border-t border-border">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium text-foreground">{selectedMatch.yahooSymbol}</div>
-                  <div className="text-sm text-muted-foreground">{selectedMatch.name}</div>
-                  <div className="text-xs text-neutral font-mono">
-                    {(() => {
-                      const parts = [selectedMatch.exchange, selectedMatch.region].filter(
-                        (value): value is string => Boolean(value && value.trim().length > 0)
-                      )
-                      if (selectedMatch.description) {
-                        parts.push(selectedMatch.description)
-                      }
-                      return parts.length > 0 ? parts.join(" · ") : "—"
-                    })()}
-                  </div>
-                  {selectedMatch.symbol.toUpperCase() !== selectedMatch.yahooSymbol.toUpperCase() && (
-                    <div className="text-[10px] text-muted-foreground">
-                      Base ticker: {selectedMatch.symbol}
-                    </div>
-                  )}
-                </div>
-                <div className="text-right space-y-1">
-                  <div className="font-medium text-foreground min-h-[1.5rem] flex items-center justify-end">
-                    {isFetchingQuote ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      formatCurrency(quote?.price ?? null)
+          {error && <div className="text-sm text-destructive">{error}</div>}
+
+          {matches.length > 0 && (
+            <div className="rounded-md border border-border/60 bg-background/40 text-sm">
+              {matches.map((match) => (
+                <button
+                  key={match.yahooSymbol}
+                  onClick={() => void handleSelectMatch(match)}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-muted"
+                >
+                  <div>
+                    <div className="font-medium text-foreground">{match.yahooSymbol}</div>
+                    <div className="text-xs text-muted-foreground">{match.name}</div>
+                    {match.symbol.toUpperCase() !== match.yahooSymbol.toUpperCase() && (
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Base ticker: {match.symbol}
+                      </div>
                     )}
                   </div>
-                  {changeValue !== null && (
-                    <div
-                      className={`text-sm flex items-center justify-end ${
-                        changeValue >= 0 ? "text-gain" : "text-loss"
-                      }`}
-                    >
-                      {changeValue >= 0 ? (
-                        <TrendingUp className="h-3 w-3 mr-1" />
-                      ) : (
-                        <TrendingDown className="h-3 w-3 mr-1" />
-                      )}
-                      {(() => {
-                        const formattedChange = formatCurrency(Math.abs(changeValue))
-                        return formattedChange === "—"
-                          ? "—"
-                          : `${changeValue >= 0 ? "+" : "-"}${formattedChange.replace(/^[-+]/, "")}`
-                      })()}
-                      {changePercentValue !== null &&
-                        ` (${changePercentValue >= 0 ? "+" : ""}${changePercentValue.toFixed(2)}%)`}
-                    </div>
-                  )}
+                  <div className="text-xs text-muted-foreground text-right">
+                    {(() => {
+                      const parts = [match.exchange, match.region].filter(
+                        (value): value is string => Boolean(value && value.trim().length > 0)
+                      )
+                      if (match.description) {
+                        parts.push(match.description)
+                      }
+                      if (typeof match.confidence === "number" && match.confidence > 0) {
+                        parts.push(`conf ${(match.confidence * 100).toFixed(0)}%`)
+                      }
+                      return parts.join(" · ")
+                    })() || ""}
+                  </div>
+                </button>
+              ))}
+              {isSearching && (
+                <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Searching…
                 </div>
-              </div>
+              )}
             </div>
+          )}
 
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="space-y-1">
-                <div className="text-muted-foreground">Latest trading day</div>
-                <div className="text-foreground">{marketTimeDisplay}</div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-muted-foreground">Previous close</div>
-                <div className="text-foreground">{formatCurrency(quote?.previousClose ?? null)}</div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-muted-foreground">Day range</div>
-                <div className="text-foreground">
-                  {dayLowValue !== null && dayHighValue !== null
-                    ? `${formatCurrency(dayLowValue)} - ${formatCurrency(dayHighValue)}`
-                    : "—"}
+          {selectedMatch && (
+            <div className="space-y-4 pt-4 border-t border-border">
+              <div className="space-y-2">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="font-medium text-foreground">{selectedMatch.yahooSymbol}</div>
+                    <div className="text-sm text-muted-foreground">{selectedMatch.name}</div>
+                    <div className="text-xs text-neutral font-mono">
+                      {(() => {
+                        const parts = [selectedMatch.exchange, selectedMatch.region].filter(
+                          (value): value is string => Boolean(value && value.trim().length > 0)
+                        )
+                        if (selectedMatch.description) {
+                          parts.push(selectedMatch.description)
+                        }
+                        return parts.length > 0 ? parts.join(" · ") : "—"
+                      })()}
+                    </div>
+                    {selectedMatch.symbol.toUpperCase() !== selectedMatch.yahooSymbol.toUpperCase() && (
+                      <div className="text-[10px] text-muted-foreground">
+                        Base ticker: {selectedMatch.symbol}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-right space-y-2">
+                    <div className="font-medium text-foreground min-h-[1.5rem] flex items-center justify-end">
+                      {isFetchingQuote ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        formatCurrency(quote?.price ?? null)
+                      )}
+                    </div>
+                    {changeValue !== null && (
+                      <div
+                        className={`text-sm flex items-center justify-end ${
+                          changeValue >= 0 ? "text-gain" : "text-loss"
+                        }`}
+                      >
+                        {changeValue >= 0 ? (
+                          <TrendingUp className="h-3 w-3 mr-1" />
+                        ) : (
+                          <TrendingDown className="h-3 w-3 mr-1" />
+                        )}
+                        {(() => {
+                          const formattedChange = formatCurrency(Math.abs(changeValue))
+                          return formattedChange === "—"
+                            ? "—"
+                            : `${changeValue >= 0 ? "+" : "-"}${formattedChange.replace(/^[-+]/, "")}`
+                        })()}
+                        {changePercentValue !== null &&
+                          ` (${changePercentValue >= 0 ? "+" : ""}${changePercentValue.toFixed(2)}%)`}
+                      </div>
+                    )}
+                    <Button
+                      size="sm"
+                      className="ml-auto"
+                      onClick={handleOpenBuyDialog}
+                      disabled={!quote || isFetchingQuote}
+                    >
+                      Buy
+                    </Button>
+                  </div>
                 </div>
               </div>
-              <div className="space-y-1">
-                <div className="text-muted-foreground">Volume</div>
-                <div className="text-foreground">
-                  {volumeValue !== null ? volumeValue.toLocaleString() : "—"}
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="space-y-1">
+                  <div className="text-muted-foreground">Latest trading day</div>
+                  <div className="text-foreground">{marketTimeDisplay}</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-muted-foreground">Previous close</div>
+                  <div className="text-foreground">{formatCurrency(quote?.previousClose ?? null)}</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-muted-foreground">Day range</div>
+                  <div className="text-foreground">
+                    {dayLowValue !== null && dayHighValue !== null
+                      ? `${formatCurrency(dayLowValue)} - ${formatCurrency(dayHighValue)}`
+                      : "—"}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-muted-foreground">Volume</div>
+                  <div className="text-foreground">
+                    {volumeValue !== null ? volumeValue.toLocaleString() : "—"}
+                  </div>
                 </div>
               </div>
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {isBuyDialogOpen && selectedMatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-lg border border-border bg-card shadow-xl">
+            <div className="border-b border-border px-4 py-3">
+              <div className="text-sm font-semibold text-foreground">Buy {selectedMatch.yahooSymbol}</div>
+              <div className="text-xs text-muted-foreground">{selectedMatch.name}</div>
+            </div>
+            <form className="space-y-4 px-4 py-4" onSubmit={handleSubmitBuy}>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="trade-quantity">
+                  Amount (shares)
+                </label>
+                <Input
+                  id="trade-quantity"
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  value={tradeQuantity}
+                  onChange={(event) => setTradeQuantity(event.target.value)}
+                  placeholder="10"
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="trade-price">
+                  Price per share
+                </label>
+                <Input
+                  id="trade-price"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  value={tradePrice}
+                  onChange={(event) => setTradePrice(event.target.value)}
+                  placeholder="0.00"
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="trade-date">
+                  Trade date
+                </label>
+                <Input
+                  id="trade-date"
+                  type="date"
+                  value={tradeDate}
+                  onChange={(event) => setTradeDate(event.target.value)}
+                  required
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCloseBuyDialog}
+                  disabled={isSubmittingBuy}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={
+                    isSubmittingBuy ||
+                    !tradeQuantity ||
+                    !tradePrice ||
+                    !tradeDate ||
+                    Number.isNaN(Number.parseFloat(tradePrice)) ||
+                    Number.isNaN(Number.parseFloat(tradeQuantity))
+                  }
+                >
+                  {isSubmittingBuy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm Buy"}
+                </Button>
+              </div>
+            </form>
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </div>
+      )}
+    </>
   )
 }

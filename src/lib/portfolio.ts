@@ -29,6 +29,7 @@ export type PortfolioHolding = AggregatedInstrument & {
   symbol: string
   name: string
   currentPrice: number
+  yahooSymbol: string | null
 }
 
 const sortByTradeDate = (a: Purchase, b: Purchase) =>
@@ -133,6 +134,7 @@ export const getPortfolioHoldings = cache(async (): Promise<PortfolioHolding[]> 
         symbol: instrument.symbol,
         name: instrument.name,
         currentPrice: instrument.currentPrice,
+        yahooSymbol: instrument.isin,
       }
     })
     .filter((holding) => holding.quantity > 0 && holding.marketValue > 0)

@@ -1,5 +1,11 @@
 import { prisma } from "./prisma"
-import { getDailySeries, getMonthlySeries } from "./alpha-vantage"
+import { fetchYahooHistory } from "./yahoo-finance"
+
+type SymbolCandidateInstrument = {
+  id: string
+  symbol: string
+  yahooSymbol?: string | null
+}
 
 const MS_PER_DAY = 86_400_000
 const DAYS_IN_YEAR = 365
@@ -20,7 +26,62 @@ const differenceInMonths = (later: Date, earlier: Date) =>
 
 const startOfDay = (date: Date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
 
-const ensureDailyHistory = async (instrument: { id: string; symbol: string }) => {
+const buildSymbolCandidates = (instrument: SymbolCandidateInstrument): string[] => {
+  const candidates = [instrument.yahooSymbol, instrument.symbol]
+
+  const cleaned = candidates
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter((value) => value.length > 0)
+
+  if (cleaned.length === 0) {
+    return []
+  }
+
+  return Array.from(new Set(cleaned))
+}
+
+type HistoryFetchResult = {
+  symbol: string
+  series: Awaited<ReturnType<typeof fetchYahooHistory>>
+}
+
+const fetchHistoryWithCandidates = async (
+  symbolCandidates: string[],
+  options: Parameters<typeof fetchYahooHistory>[1]
+): Promise<HistoryFetchResult> => {
+  if (symbolCandidates.length === 0) {
+    throw new Error("No symbol candidates available for history fetch")
+  }
+
+  let lastError: unknown = null
+
+  for (const candidate of symbolCandidates) {
+    try {
+      const series = await fetchYahooHistory(candidate, options)
+      return { symbol: candidate, series }
+    } catch (error) {
+      lastError = error
+
+      const status = typeof error === "object" && error !== null ? (error as { status?: number }).status : undefined
+      if (status === 404) {
+        continue
+      }
+
+      throw error
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError
+  }
+
+  throw new Error("Failed to fetch history for provided symbols")
+}
+
+const ensureDailyHistory = async (
+  instrument: SymbolCandidateInstrument,
+  symbolCandidates: string[]
+): Promise<string | null> => {
   const now = new Date()
   const requiredStart = startOfDay(new Date(now.getTime() - (DAYS_IN_YEAR + 30) * MS_PER_DAY))
 
@@ -39,15 +100,17 @@ const ensureDailyHistory = async (instrument: { id: string; symbol: string }) =>
   const needsFreshData = !latest || differenceInDays(now, latest.date) >= 2
 
   if (!needsCoverage && !needsFreshData) {
-    return
+    return null
   }
 
-  const fetchDays = needsCoverage ? 1_200 : 200
-  const series = await getDailySeries(instrument.symbol, { days: fetchDays })
+  const { symbol: resolvedSymbol, series } = await fetchHistoryWithCandidates(symbolCandidates, {
+    range: needsCoverage ? "max" : "2y",
+    interval: "1d",
+  })
 
   const filtered = series.filter((point) => toUTCDate(point.date) >= requiredStart)
   if (filtered.length === 0) {
-    return
+    return resolvedSymbol
   }
 
   await prisma.priceHistory.createMany({
@@ -59,9 +122,14 @@ const ensureDailyHistory = async (instrument: { id: string; symbol: string }) =>
     })),
     skipDuplicates: true,
   })
+
+  return resolvedSymbol
 }
 
-const ensureMonthlyHistory = async (instrument: { id: string; symbol: string }) => {
+const ensureMonthlyHistory = async (
+  instrument: SymbolCandidateInstrument,
+  symbolCandidates: string[]
+): Promise<string | null> => {
   const now = new Date()
   const requiredStart = startOfUTCMonth(new Date(Date.UTC(now.getUTCFullYear() - 5, now.getUTCMonth(), 1)))
 
@@ -80,14 +148,17 @@ const ensureMonthlyHistory = async (instrument: { id: string; symbol: string }) 
   const needsFreshData = !latest || differenceInMonths(now, latest.date) >= 1
 
   if (!needsCoverage && !needsFreshData) {
-    return
+    return null
   }
 
-  const series = await getMonthlySeries(instrument.symbol)
+  const { symbol: resolvedSymbol, series } = await fetchHistoryWithCandidates(symbolCandidates, {
+    range: "max",
+    interval: "1mo",
+  })
   const filtered = series.filter((point) => toUTCDate(point.date) >= requiredStart)
 
   if (filtered.length === 0) {
-    return
+    return resolvedSymbol
   }
 
   await prisma.priceHistory.createMany({
@@ -99,11 +170,31 @@ const ensureMonthlyHistory = async (instrument: { id: string; symbol: string }) 
     })),
     skipDuplicates: true,
   })
+
+  return resolvedSymbol
 }
 
-export const ensureInstrumentPriceHistory = async (instrument: { id: string; symbol: string }) => {
-  await ensureDailyHistory(instrument)
-  await ensureMonthlyHistory(instrument)
+export const ensureInstrumentPriceHistory = async (instrument: SymbolCandidateInstrument) => {
+  const symbolCandidates = buildSymbolCandidates(instrument)
+
+  let resolvedSymbol: string | null = null
+
+  const dailySymbol = await ensureDailyHistory(instrument, symbolCandidates)
+  if (dailySymbol) {
+    resolvedSymbol = dailySymbol
+  }
+
+  const monthlySymbol = await ensureMonthlyHistory(instrument, resolvedSymbol ? [resolvedSymbol] : symbolCandidates)
+  if (monthlySymbol) {
+    resolvedSymbol = monthlySymbol
+  }
+
+  if (resolvedSymbol && resolvedSymbol !== instrument.symbol) {
+    await prisma.instrument.update({
+      where: { id: instrument.id },
+      data: { symbol: resolvedSymbol },
+    })
+  }
 }
 
 export type StoredPricePoint = {

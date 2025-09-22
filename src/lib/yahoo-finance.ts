@@ -23,6 +23,14 @@ export type YahooQuote = {
   history: YahooPricePoint[]
 }
 
+type YahooChartResult = {
+  meta: Record<string, unknown>
+  timestamps: number[]
+  prices: Array<number | null>
+  range: string
+  interval: string
+}
+
 type YahooChartResponse = {
   chart?: {
     result?: Array<{
@@ -59,16 +67,19 @@ const toISODate = (timestamp: number | null | undefined) =>
     ? new Date(timestamp * 1000).toISOString()
     : null
 
-export const fetchYahooQuote = async (
-  symbol: string,
-  options: { range?: string; interval?: string } = {}
-): Promise<YahooQuote | null> => {
+type YahooChartOptions = {
+  range?: string
+  interval?: string
+}
+
+const fetchYahooChart = async (symbol: string, options: YahooChartOptions = {}): Promise<YahooChartResult> => {
   const trimmed = symbol.trim()
   if (!trimmed) {
-    return null
+    throw new Error("Symbol is required")
   }
 
-  const { range = "5y", interval = "1d" } = options
+  const range = options.range ?? "5y"
+  const interval = options.interval ?? "1d"
 
   const searchParams = new URLSearchParams({ range, interval })
   const response = await fetch(`${BASE_URL}/${encodeURIComponent(trimmed)}?${searchParams.toString()}`, {
@@ -77,7 +88,9 @@ export const fetchYahooQuote = async (
   })
 
   if (!response.ok) {
-    throw new Error(`Yahoo Finance request failed with status ${response.status}`)
+    const error = new Error(`Yahoo Finance request failed with status ${response.status}`)
+    ;(error as Error & { status?: number }).status = response.status
+    throw error
   }
 
   const payload: YahooChartResponse = await response.json()
@@ -87,26 +100,21 @@ export const fetchYahooQuote = async (
     throw new Error(`Yahoo Finance error: ${description}`)
   }
 
-  const meta = result.meta ?? {}
-  const symbolValue = toStringOrNull(meta.symbol) ?? trimmed
-  const name = toStringOrNull(meta.longName) ?? toStringOrNull(meta.shortName) ?? symbolValue
-  const exchange = toStringOrNull(meta.fullExchangeName) ?? toStringOrNull(meta.exchangeName)
-  const currency = toStringOrNull(meta.currency)
-
-  const price = toNumber(meta.regularMarketPrice)
-  const change = toNumber(meta.regularMarketChange)
-  const changePercent = toNumber(meta.regularMarketChangePercent)
-  const previousClose = toNumber(meta.previousClose) ?? toNumber(meta.chartPreviousClose)
-  const marketTime = toISODate(toNumber(meta.regularMarketTime))
-  const dayLow = toNumber(meta.regularMarketDayLow)
-  const dayHigh = toNumber(meta.regularMarketDayHigh)
-  const volume = toNumber(meta.regularMarketVolume)
-
   const timestamps = Array.isArray(result.timestamp) ? result.timestamp : []
   const adjCloseSeries = result.indicators?.adjclose?.[0]?.adjclose
   const closeSeries = result.indicators?.close?.[0]?.close
   const prices = Array.isArray(adjCloseSeries) ? adjCloseSeries : Array.isArray(closeSeries) ? closeSeries : []
 
+  return {
+    meta: result.meta ?? {},
+    timestamps,
+    prices,
+    range,
+    interval,
+  }
+}
+
+const buildHistory = (timestamps: number[], prices: Array<number | null>): YahooPricePoint[] => {
   const history: YahooPricePoint[] = []
   for (let i = 0; i < Math.min(timestamps.length, prices.length); i++) {
     const ts = timestamps[i]
@@ -121,6 +129,45 @@ export const fetchYahooQuote = async (
 
     history.push({ date: new Date(ts * 1000).toISOString().slice(0, 10), close: closeValue })
   }
+
+  return history.sort((a, b) => a.date.localeCompare(b.date))
+}
+
+export const fetchYahooHistory = async (
+  symbol: string,
+  options: YahooChartOptions = {}
+): Promise<YahooPricePoint[]> => {
+  const chart = await fetchYahooChart(symbol, options)
+  return buildHistory(chart.timestamps, chart.prices)
+}
+
+export const fetchYahooQuote = async (
+  symbol: string,
+  options: YahooChartOptions = {}
+): Promise<YahooQuote | null> => {
+  const trimmed = symbol.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  const chart = await fetchYahooChart(trimmed, options)
+  const { meta, range, interval } = chart
+
+  const symbolValue = toStringOrNull(meta.symbol) ?? trimmed
+  const name = toStringOrNull(meta.longName) ?? toStringOrNull(meta.shortName) ?? symbolValue
+  const exchange = toStringOrNull(meta.fullExchangeName) ?? toStringOrNull(meta.exchangeName)
+  const currency = toStringOrNull(meta.currency)
+
+  const price = toNumber(meta.regularMarketPrice)
+  const change = toNumber(meta.regularMarketChange)
+  const changePercent = toNumber(meta.regularMarketChangePercent)
+  const previousClose = toNumber(meta.previousClose) ?? toNumber(meta.chartPreviousClose)
+  const marketTime = toISODate(toNumber(meta.regularMarketTime))
+  const dayLow = toNumber(meta.regularMarketDayLow)
+  const dayHigh = toNumber(meta.regularMarketDayHigh)
+  const volume = toNumber(meta.regularMarketVolume)
+
+  const history = buildHistory(chart.timestamps, chart.prices)
 
   return {
     symbol: symbolValue,
