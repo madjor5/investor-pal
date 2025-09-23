@@ -1,4 +1,4 @@
-import { cache } from "react"
+import { unstable_noStore as noStore } from "next/cache"
 import type { Instrument, Purchase } from "@prisma/client"
 import { prisma } from "./prisma"
 
@@ -77,6 +77,8 @@ export const aggregateInstrument = (
     realizedPnL += proceeds - costForSoldShares
   }
 
+  const netQuantity = instrument.purchases.reduce((acc, trade) => acc + trade.quantity, 0)
+
   const remaining = lots.reduce(
     (acc, lot) => {
       acc.quantity += lot.quantity
@@ -87,9 +89,9 @@ export const aggregateInstrument = (
   )
 
   return {
-    quantity: remaining.quantity,
+    quantity: netQuantity,
     costBasis: remaining.totalCost,
-    marketValue: remaining.quantity * instrument.currentPrice,
+    marketValue: netQuantity * instrument.currentPrice,
     realizedPnL,
     invested,
   }
@@ -111,15 +113,17 @@ export const summarizePortfolio = (
   )
 }
 
-export const getPortfolioTotals = cache(async () => {
+export const getPortfolioTotals = async () => {
+  noStore()
   const instruments = await prisma.instrument.findMany({
     include: { purchases: true },
   })
 
   return summarizePortfolio(instruments)
-})
+}
 
-export const getPortfolioHoldings = cache(async (): Promise<PortfolioHolding[]> => {
+export const getPortfolioHoldings = async (): Promise<PortfolioHolding[]> => {
+  noStore()
   const instruments = await prisma.instrument.findMany({
     include: { purchases: true },
   })
@@ -138,4 +142,4 @@ export const getPortfolioHoldings = cache(async (): Promise<PortfolioHolding[]> 
       }
     })
     .filter((holding) => holding.quantity > 0 && holding.marketValue > 0)
-})
+}

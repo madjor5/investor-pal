@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { revalidatePath } from "next/cache"
 import { prisma } from "@/lib/prisma"
+import { aggregateInstrument } from "@/lib/portfolio"
 
 const parseNumber = (value: unknown) => {
   if (typeof value === "number") {
@@ -46,6 +47,9 @@ export async function POST(request: Request) {
     const price = parseNumber(payload?.price)
     const latestMarketPrice = parseNumber(payload?.marketPrice)
     const accountId = typeof payload?.accountId === "string" ? payload.accountId.trim() : ""
+    const sideRaw = typeof payload?.side === "string" ? payload.side.trim().toLowerCase() : "buy"
+    const side = sideRaw === "sell" ? "sell" : "buy"
+    const isSell = side === "sell"
 
     if (!symbol || !yahooSymbol || !name) {
       return NextResponse.json({ error: "Missing instrument details" }, { status: 400 })
@@ -85,7 +89,15 @@ export async function POST(request: Request) {
       where: {
         OR: [{ symbol }, { isin: yahooSymbol }],
       },
+      include: { purchases: true },
     })
+
+    if (isSell && !existingInstrument) {
+      return NextResponse.json(
+        { error: "Cannot sell an instrument that is not in the portfolio" },
+        { status: 400 }
+      )
+    }
 
     const instrument = existingInstrument
       ? await prisma.instrument.update({
@@ -94,6 +106,7 @@ export async function POST(request: Request) {
             name,
             currentPrice: latestMarketPrice ?? price,
           },
+          include: { purchases: true },
         })
       : await prisma.instrument.create({
           data: {
@@ -102,13 +115,24 @@ export async function POST(request: Request) {
             isin: yahooSymbol,
             currentPrice: latestMarketPrice ?? price,
           },
+          include: { purchases: true },
         })
+
+    if (isSell) {
+      const aggregated = aggregateInstrument(instrument)
+      if (aggregated.quantity < quantity) {
+        return NextResponse.json(
+          { error: "Cannot sell more shares than currently held" },
+          { status: 400 }
+        )
+      }
+    }
 
     const purchase = await prisma.purchase.create({
       data: {
         accountId: account.id,
         instrumentId: instrument.id,
-        quantity,
+        quantity: isSell ? -quantity : quantity,
         price,
         fees: 0,
         tradeDate,

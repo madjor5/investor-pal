@@ -11,6 +11,18 @@ import type { YahooQuote } from "@/lib/yahoo-finance"
 
 const MIN_QUERY_LENGTH = 2
 
+const parseQuantityValue = (value: string): number | null => {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+const parsePriceValue = (value: string): number | null => {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+const formatTotalValue = (quantity: number, price: number): string => (quantity * price).toFixed(2)
+
 export const StockSearch = () => {
   const [searchQuery, setSearchQuery] = useState("")
   const [matches, setMatches] = useState<TickerMatch[]>([])
@@ -24,6 +36,9 @@ export const StockSearch = () => {
   const [tradeQuantity, setTradeQuantity] = useState("")
   const [tradePrice, setTradePrice] = useState("")
   const [tradeDate, setTradeDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [tradeTotal, setTradeTotal] = useState("")
+  const [hasEditedTradePrice, setHasEditedTradePrice] = useState(false)
+  const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null)
 
   const router = useRouter()
 
@@ -61,6 +76,7 @@ export const StockSearch = () => {
     const parsed = new Date(quote.marketTime)
     return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleString()
   })()
+
 
   const fetchMatches = useCallback(
     async (query: string): Promise<TickerMatch[]> => {
@@ -198,16 +214,91 @@ export const StockSearch = () => {
       return null
     })()
 
-    setTradeQuantity((current) => (current.trim().length > 0 ? current : "10"))
-    setTradePrice(priceSource !== null ? priceSource.toFixed(2) : "")
+    const fallbackQuantity = (() => {
+      const existing = parseQuantityValue(tradeQuantity)
+      if (existing !== null && existing > 0) {
+        return existing
+      }
+      return 10
+    })()
+
+    const nextQuantity = String(fallbackQuantity)
+    const nextPrice = priceSource !== null ? priceSource.toFixed(2) : ""
+    const nextTotal =
+      priceSource !== null && Number.isFinite(priceSource)
+        ? formatTotalValue(fallbackQuantity, priceSource)
+        : ""
+
+    setTradeQuantity(nextQuantity)
+    setTradePrice(nextPrice)
+    setTradeTotal(nextTotal)
     setTradeDate(new Date().toISOString().slice(0, 10))
+    setSuggestedPrice(priceSource)
+    setHasEditedTradePrice(false)
     setError(null)
     setIsBuyDialogOpen(true)
-  }, [quote])
+  }, [quote, tradeQuantity])
 
   const handleCloseBuyDialog = useCallback(() => {
     setIsBuyDialogOpen(false)
+    setSuggestedPrice(null)
+    setTradeTotal("")
+    setHasEditedTradePrice(false)
   }, [])
+
+  const getHistoricalPriceForDate = useCallback(
+    (targetDate: string): number | null => {
+      if (!quote?.history?.length) {
+        return null
+      }
+
+      let latest: number | null = null
+      for (const point of quote.history) {
+        if (point.date === targetDate) {
+          return point.close
+        }
+
+        if (point.date < targetDate) {
+          latest = point.close
+          continue
+        }
+
+        if (point.date > targetDate) {
+          break
+        }
+      }
+
+      return latest
+    },
+    [quote?.history]
+  )
+
+  useEffect(() => {
+    if (!isBuyDialogOpen || !tradeDate) {
+      return
+    }
+
+    const normalized = tradeDate.trim()
+    if (normalized.length === 0) {
+      setSuggestedPrice(null)
+      return
+    }
+
+    const historicalPrice = getHistoricalPriceForDate(normalized)
+    setSuggestedPrice(historicalPrice)
+
+    if (!hasEditedTradePrice && historicalPrice !== null) {
+      setTradePrice(historicalPrice.toFixed(2))
+      const quantityValue = parseQuantityValue(tradeQuantity)
+      if (quantityValue !== null) {
+        setTradeTotal(formatTotalValue(quantityValue, historicalPrice))
+      }
+    }
+
+    if (historicalPrice === null) {
+      setTradeTotal("")
+    }
+  }, [getHistoricalPriceForDate, hasEditedTradePrice, isBuyDialogOpen, tradeDate, tradeQuantity])
 
   const handleSubmitBuy = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -262,6 +353,8 @@ export const StockSearch = () => {
         setTradeQuantity("")
         setTradePrice("")
         setTradeDate(new Date().toISOString().slice(0, 10))
+        setTradeTotal("")
+        setHasEditedTradePrice(false)
         router.refresh()
       } catch (submitError) {
         const message =
@@ -453,7 +546,23 @@ export const StockSearch = () => {
                   step="1"
                   inputMode="numeric"
                   value={tradeQuantity}
-                  onChange={(event) => setTradeQuantity(event.target.value)}
+                  onChange={(event) => {
+                    setTradeQuantity(event.target.value)
+                  }}
+                  onBlur={() => {
+                    const quantityValue = parseQuantityValue(tradeQuantity)
+                    if (quantityValue === null) {
+                      setTradeQuantity("")
+                      setTradeTotal("")
+                      return
+                    }
+
+                    setTradeQuantity(String(quantityValue))
+                    const priceValue = parsePriceValue(tradePrice)
+                    if (priceValue !== null) {
+                      setTradeTotal(formatTotalValue(quantityValue, priceValue))
+                    }
+                  }}
                   placeholder="10"
                   required
                 />
@@ -469,7 +578,63 @@ export const StockSearch = () => {
                   min="0"
                   inputMode="decimal"
                   value={tradePrice}
-                  onChange={(event) => setTradePrice(event.target.value)}
+                  onChange={(event) => {
+                    setTradePrice(event.target.value)
+                    setHasEditedTradePrice(true)
+                  }}
+                  onBlur={() => {
+                    const priceValue = parsePriceValue(tradePrice)
+                    if (priceValue === null) {
+                      return
+                    }
+
+                    setTradePrice(priceValue.toFixed(2))
+                    const quantityValue = parseQuantityValue(tradeQuantity)
+                    if (quantityValue !== null) {
+                      setTradeTotal(formatTotalValue(quantityValue, priceValue))
+                    }
+                  }}
+                  placeholder="0.00"
+                  required
+                />
+                {suggestedPrice !== null && (
+                  <div className="text-[11px] text-muted-foreground">
+                    Suggested close price for {tradeDate}: {formatCurrency(suggestedPrice)}
+                  </div>
+                )}
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="trade-total">
+                  Total price
+                </label>
+                <Input
+                  id="trade-total"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  value={tradeTotal}
+                  onChange={(event) => {
+                    setTradeTotal(event.target.value)
+                  }}
+                  onBlur={() => {
+                    const priceValue = parsePriceValue(tradePrice)
+                    if (priceValue === null) {
+                      return
+                    }
+
+                    const totalValue = Number.parseFloat(tradeTotal)
+                    if (!Number.isFinite(totalValue) || totalValue < 0) {
+                      setTradeTotal("")
+                      return
+                    }
+
+                    const nextQuantity = Math.floor(totalValue / priceValue)
+                    setTradeQuantity(String(nextQuantity))
+
+                    const normalizedTotal = formatTotalValue(nextQuantity, priceValue)
+                    setTradeTotal(normalizedTotal)
+                  }}
                   placeholder="0.00"
                   required
                 />
@@ -482,7 +647,10 @@ export const StockSearch = () => {
                   id="trade-date"
                   type="date"
                   value={tradeDate}
-                  onChange={(event) => setTradeDate(event.target.value)}
+                  onChange={(event) => {
+                    setTradeDate(event.target.value)
+                    setHasEditedTradePrice(false)
+                  }}
                   required
                 />
               </div>
@@ -503,9 +671,11 @@ export const StockSearch = () => {
                     isSubmittingBuy ||
                     !tradeQuantity ||
                     !tradePrice ||
+                    !tradeTotal ||
                     !tradeDate ||
                     Number.isNaN(Number.parseFloat(tradePrice)) ||
-                    Number.isNaN(Number.parseFloat(tradeQuantity))
+                    Number.isNaN(Number.parseFloat(tradeQuantity)) ||
+                    Number.isNaN(Number.parseFloat(tradeTotal))
                   }
                 >
                   {isSubmittingBuy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm Buy"}
