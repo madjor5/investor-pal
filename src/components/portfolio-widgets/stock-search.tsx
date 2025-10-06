@@ -386,7 +386,12 @@ export const StockSearch = () => {
               className="flex-1"
             />
             <Button onClick={handleSearch} size="sm" className="px-3" disabled={isSearching}>
-              {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              {isSearching ? (
+                <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
+              ) : (
+                <Search aria-hidden className="h-4 w-4" />
+              )}
+              <span className="sr-only">{isSearching ? "Searching" : "Search"}</span>
             </Button>
           </div>
 
@@ -460,7 +465,7 @@ export const StockSearch = () => {
                   <div className="text-right space-y-2">
                     <div className="font-medium text-foreground min-h-[1.5rem] flex items-center justify-end">
                       {isFetchingQuote ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
                       ) : (
                         formatCurrency(quote?.price ?? null)
                       )}
@@ -678,7 +683,7 @@ export const StockSearch = () => {
                     Number.isNaN(Number.parseFloat(tradeTotal))
                   }
                 >
-                  {isSubmittingBuy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm Buy"}
+                  {isSubmittingBuy ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : "Confirm Buy"}
                 </Button>
               </div>
             </form>

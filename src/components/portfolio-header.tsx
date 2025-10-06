@@ -49,7 +49,8 @@ const PortfolioHeader = () => {
             <ThemeSwitch />
 
             <Button variant="ghost" size="icon">
-              <Settings className="h-5 w-5" />
+              <Settings aria-hidden className="h-5 w-5" />
+              <span className="sr-only">Open settings</span>
             </Button>
           </div>
         </div>
