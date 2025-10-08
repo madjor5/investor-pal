@@ -3,6 +3,7 @@ import { DollarSign, GitBranch, Percent, Target, TrendingUp, TrendingDown, Activ
 import MetricCard from "@/components/metric-card";
 import PerformanceChart from "@/components/performance-chart";
 import AssetAllocationCard from "@/components/asset-allocation-card";
+import DiversificationCard from "@/components/diversification-card";
 
 
 export default function Home() {
@@ -100,6 +101,7 @@ export default function Home() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
             <AssetAllocationCard />
+            <DiversificationCard />
           </div>
         </div>
       </main>
