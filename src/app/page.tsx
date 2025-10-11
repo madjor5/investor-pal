@@ -2,8 +2,10 @@ import PortfolioHeader from "@/components/portfolio-header";
 import { DollarSign, GitBranch, Percent, Target, TrendingUp, TrendingDown, Activity, AlertTriangle } from "lucide-react";
 import MetricCard from "@/components/metric-card";
 import PerformanceChart from "@/components/performance-chart";
-import AssetAllocationCard from "@/components/asset-allocation-card";
-import DiversificationCard from "@/components/diversification-card";
+import SectorDiversificationCard from "@/components/sector-diversification-card";
+import RegionalDiversificationCard from "@/components/regional-diversification-card";
+import MarketDiversificationCard from "@/components/market-diversification-card";
+import AssetDiversificationCard from "@/components/asset-diversification-card";
 
 
 export default function Home() {
@@ -99,9 +101,11 @@ export default function Home() {
 
           <PerformanceChart />
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
-            <AssetAllocationCard />
-            <DiversificationCard />
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 sm:gap-8">
+            <RegionalDiversificationCard />
+            <SectorDiversificationCard />
+            <MarketDiversificationCard />
+            <AssetDiversificationCard />
           </div>
         </div>
       </main>
